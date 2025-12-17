@@ -1269,5 +1269,4 @@ https://online.visual-paradigm.com/ru/diagrams/features/erd-tool/
 
 ## <a id="photos">Приложение</a>
 <img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/84aa9f8f-31fa-4b7c-aca0-3bb3f7c0b13e" />
-"D:\HONOR Share\Screenshot\capture_20251218021342327(1).bmp"
-"D:\HONOR Share\Screenshot\capture_20251218021459881(1).bmp"
+https://github.com/dasha2005nastya2006-ai/-/blob/main/capture_20251218021342327(1).bmp
