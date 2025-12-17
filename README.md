@@ -813,6 +813,457 @@ SMS-рассылка уведомлений
 
 Интеграция с образовательными платформами
 
+### Итоговый код:
+```sql
+ import sqlite3
+from datetime import datetime
+from typing import List, Optional, Tuple
+
+class ChildrenCreativeCenterDB:
+    def __init__(self, db_name: str = "creative_center.db"):
+        self.conn = sqlite3.connect(db_name)
+        self.cursor = self.conn.cursor()
+        self.create_tables()
+    
+    def create_tables(self):
+        """Создание всех необходимых таблиц"""
+        
+        # Таблица учеников
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            birth_date DATE NOT NULL,
+            age INTEGER,
+            parent_name TEXT NOT NULL,
+            parent_phone TEXT NOT NULL,
+            medical_info TEXT,
+            registration_date DATE DEFAULT CURRENT_DATE,
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'graduated'))
+        )
+        ''')
+        
+        # Таблица преподавателей
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS teachers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            specialization TEXT NOT NULL,
+            qualification TEXT,
+            phone TEXT,
+            email TEXT,
+            hire_date DATE DEFAULT CURRENT_DATE,
+            salary REAL,
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'vacation'))
+        )
+        ''')
+        
+        # Таблица направлений/кружков
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS programs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            age_group TEXT,
+            duration_months INTEGER,
+            max_students INTEGER,
+            cost_per_month REAL,
+            requirements TEXT
+        )
+        ''')
+        
+        # Таблица групп
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_name TEXT NOT NULL,
+            program_id INTEGER,
+            teacher_id INTEGER,
+            schedule TEXT,
+            room TEXT,
+            start_date DATE,
+            end_date DATE,
+            current_students INTEGER DEFAULT 0,
+            FOREIGN KEY (program_id) REFERENCES programs (id),
+            FOREIGN KEY (teacher_id) REFERENCES teachers (id)
+        )
+        ''')
+        
+        # Таблица записи учеников в группы
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS enrollments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER,
+            group_id INTEGER,
+            enrollment_date DATE DEFAULT CURRENT_DATE,
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled')),
+            payment_status TEXT DEFAULT 'unpaid' CHECK(payment_status IN ('paid', 'unpaid', 'partial')),
+            FOREIGN KEY (student_id) REFERENCES students (id),
+            FOREIGN KEY (group_id) REFERENCES groups (id),
+            UNIQUE(student_id, group_id)
+        )
+        ''')
+        
+        # Таблица посещаемости
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER,
+            group_id INTEGER,
+            lesson_date DATE NOT NULL,
+            status TEXT DEFAULT 'present' CHECK(status IN ('present', 'absent', 'sick', 'vacation')),
+            notes TEXT,
+            FOREIGN KEY (student_id) REFERENCES students (id),
+            FOREIGN KEY (group_id) REFERENCES groups (id)
+        )
+        ''')
+        
+        # Таблица платежей
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER,
+            amount REAL NOT NULL,
+            payment_date DATE DEFAULT CURRENT_DATE,
+            month INTEGER,
+            year INTEGER,
+            payment_method TEXT DEFAULT 'cash' CHECK(payment_method IN ('cash', 'card', 'transfer')),
+            receipt_number TEXT UNIQUE,
+            notes TEXT,
+            FOREIGN KEY (student_id) REFERENCES students (id)
+        )
+        ''')
+        
+        # Таблица мероприятий
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_name TEXT NOT NULL,
+            event_date DATE NOT NULL,
+            event_time TEXT,
+            description TEXT,
+            location TEXT,
+            participants_limit INTEGER,
+            organizer_id INTEGER,
+            FOREIGN KEY (organizer_id) REFERENCES teachers (id)
+        )
+        ''')
+        
+        # Таблица участников мероприятий
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS event_participants (
+            event_id INTEGER,
+            student_id INTEGER,
+            role TEXT,
+            FOREIGN KEY (event_id) REFERENCES events (id),
+            FOREIGN KEY (student_id) REFERENCES students (id),
+            PRIMARY KEY (event_id, student_id)
+        )
+        ''')
+        
+        self.conn.commit()
+    
+    # --- CRUD операции для учеников ---
+    def add_student(self, first_name: str, last_name: str, birth_date: str, 
+                    parent_name: str, parent_phone: str, medical_info: str = None) -> int:
+        """Добавление нового ученика"""
+        age = self.calculate_age(birth_date)
+        self.cursor.execute('''
+        INSERT INTO students (first_name, last_name, birth_date, age, parent_name, parent_phone, medical_info)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (first_name, last_name, birth_date, age, parent_name, parent_phone, medical_info))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def update_student(self, student_id: int, **kwargs):
+        """Обновление данных ученика"""
+        if not kwargs:
+            return
+        
+        set_clause = ', '.join([f"{key} = ?" for key in kwargs.keys()])
+        values = list(kwargs.values())
+        values.append(student_id)
+        
+        query = f"UPDATE students SET {set_clause} WHERE id = ?"
+        self.cursor.execute(query, values)
+        self.conn.commit()
+    
+    def get_student(self, student_id: int) -> Optional[Tuple]:
+        """Получение данных ученика по ID"""
+        self.cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
+        return self.cursor.fetchone()
+    
+    def get_all_students(self, status: str = 'active') -> List[Tuple]:
+        """Получение всех учеников (по умолчанию активных)"""
+        self.cursor.execute('SELECT * FROM students WHERE status = ?', (status,))
+        return self.cursor.fetchall()
+    
+    # --- CRUD операции для преподавателей ---
+    def add_teacher(self, first_name: str, last_name: str, specialization: str,
+                    qualification: str = None, phone: str = None, email: str = None,
+                    salary: float = None) -> int:
+        """Добавление нового преподавателя"""
+        self.cursor.execute('''
+        INSERT INTO teachers (first_name, last_name, specialization, qualification, phone, email, salary)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (first_name, last_name, specialization, qualification, phone, email, salary))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    # --- CRUD операции для программ ---
+    def add_program(self, program_name: str, description: str = None, age_group: str = None,
+                    duration_months: int = None, max_students: int = None,
+                    cost_per_month: float = None, requirements: str = None) -> int:
+        """Добавление новой программы/кружка"""
+        self.cursor.execute('''
+        INSERT INTO programs (program_name, description, age_group, duration_months, 
+                              max_students, cost_per_month, requirements)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (program_name, description, age_group, duration_months, 
+              max_students, cost_per_month, requirements))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    # --- CRUD операции для групп ---
+    def add_group(self, group_name: str, program_id: int, teacher_id: int,
+                  schedule: str, room: str, start_date: str, end_date: str = None) -> int:
+        """Создание новой группы"""
+        self.cursor.execute('''
+        INSERT INTO groups (group_name, program_id, teacher_id, schedule, room, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (group_name, program_id, teacher_id, schedule, room, start_date, end_date))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    # --- Операции с записями ---
+    def enroll_student(self, student_id: int, group_id: int) -> bool:
+        """Запись ученика в группу"""
+        try:
+            # Проверяем наличие мест в группе
+            self.cursor.execute('''
+            SELECT g.current_students, p.max_students 
+            FROM groups g 
+            JOIN programs p ON g.program_id = p.id 
+            WHERE g.id = ?
+            ''', (group_id,))
+            result = self.cursor.fetchone()
+            
+            if result and result[0] < result[1]:
+                self.cursor.execute('''
+                INSERT INTO enrollments (student_id, group_id) 
+                VALUES (?, ?)
+                ''', (student_id, group_id))
+                
+                # Увеличиваем счетчик студентов в группе
+                self.cursor.execute('''
+                UPDATE groups SET current_students = current_students + 1 
+                WHERE id = ?
+                ''', (group_id,))
+                
+                self.conn.commit()
+                return True
+            return False
+        except sqlite3.IntegrityError:
+            return False
+    
+    # --- Посещаемость ---
+    def mark_attendance(self, student_id: int, group_id: int, lesson_date: str,
+                        status: str = 'present', notes: str = None):
+        """Отметка посещаемости"""
+        self.cursor.execute('''
+        INSERT INTO attendance (student_id, group_id, lesson_date, status, notes)
+        VALUES (?, ?, ?, ?, ?)
+        ''', (student_id, group_id, lesson_date, status, notes))
+        self.conn.commit()
+    
+    # --- Платежи ---
+    def add_payment(self, student_id: int, amount: float, month: int, year: int,
+                    payment_method: str = 'cash', receipt_number: str = None,
+                    notes: str = None):
+        """Добавление платежа"""
+        self.cursor.execute('''
+        INSERT INTO payments (student_id, amount, month, year, payment_method, receipt_number, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (student_id, amount, month, year, payment_method, receipt_number, notes))
+        
+        # Обновляем статус оплаты в записи
+        self.cursor.execute('''
+        UPDATE enrollments 
+        SET payment_status = CASE 
+            WHEN (SELECT SUM(amount) FROM payments WHERE student_id = ? AND month = ? AND year = ?) >= 
+                 (SELECT p.cost_per_month FROM enrollments e 
+                  JOIN groups g ON e.group_id = g.id 
+                  JOIN programs p ON g.program_id = p.id 
+                  WHERE e.student_id = ?)
+            THEN 'paid' 
+            ELSE 'partial' 
+        END
+        WHERE student_id = ?
+        ''', (student_id, month, year, student_id, student_id))
+        
+        self.conn.commit()
+    
+    # --- Отчеты и аналитика ---
+    def get_group_attendance(self, group_id: int, start_date: str, end_date: str) -> List[Tuple]:
+        """Получение отчета по посещаемости группы"""
+        self.cursor.execute('''
+        SELECT s.first_name, s.last_name, a.lesson_date, a.status, a.notes
+        FROM attendance a
+        JOIN students s ON a.student_id = s.id
+        WHERE a.group_id = ? AND a.lesson_date BETWEEN ? AND ?
+        ORDER BY a.lesson_date, s.last_name
+        ''', (group_id, start_date, end_date))
+        return self.cursor.fetchall()
+    
+    def get_financial_report(self, month: int, year: int) -> Tuple:
+        """Финансовый отчет за месяц"""
+        # Общая сумма оплат за месяц
+        self.cursor.execute('''
+        SELECT COALESCE(SUM(amount), 0) FROM payments 
+        WHERE month = ? AND year = ?
+        ''', (month, year))
+        total_income = self.cursor.fetchone()[0]
+        
+        # Количество должников
+        self.cursor.execute('''
+        SELECT COUNT(DISTINCT student_id) FROM enrollments 
+        WHERE payment_status IN ('unpaid', 'partial') AND status = 'active'
+        ''')
+        debtors_count = self.cursor.fetchone()[0]
+        
+        return total_income, debtors_count
+    
+    def get_program_statistics(self) -> List[Tuple]:
+        """Статистика по программам"""
+        self.cursor.execute('''
+        SELECT p.program_name, 
+               COUNT(DISTINCT g.id) as group_count,
+               COUNT(DISTINCT e.student_id) as student_count,
+               AVG(g.current_students) as avg_group_size
+        FROM programs p
+        LEFT JOIN groups g ON p.id = g.program_id
+        LEFT JOIN enrollments e ON g.id = e.group_id AND e.status = 'active'
+        GROUP BY p.id
+        ''')
+        return self.cursor.fetchall()
+    
+    # --- Вспомогательные методы ---
+    @staticmethod
+    def calculate_age(birth_date: str) -> int:
+        """Вычисление возраста по дате рождения"""
+        birth = datetime.strptime(birth_date, '%Y-%m-%d')
+        today = datetime.now()
+        age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+        return age
+    
+    def search_students(self, search_term: str) -> List[Tuple]:
+        """Поиск учеников по имени, фамилии или имени родителя"""
+        search_pattern = f"%{search_term}%"
+        self.cursor.execute('''
+        SELECT * FROM students 
+        WHERE first_name LIKE ? OR last_name LIKE ? OR parent_name LIKE ?
+        ''', (search_pattern, search_pattern, search_pattern))
+        return self.cursor.fetchall()
+    
+    def get_student_schedule(self, student_id: int) -> List[Tuple]:
+        """Получение расписания ученика"""
+        self.cursor.execute('''
+        SELECT g.group_name, p.program_name, g.schedule, g.room, t.first_name, t.last_name
+        FROM enrollments e
+        JOIN groups g ON e.group_id = g.id
+        JOIN programs p ON g.program_id = p.id
+        JOIN teachers t ON g.teacher_id = t.id
+        WHERE e.student_id = ? AND e.status = 'active'
+        ''', (student_id,))
+        return self.cursor.fetchall()
+    
+    def close(self):
+        """Закрытие соединения с базой данных"""
+        self.conn.close()
+
+# --- Пример использования ---
+def main():
+    # Инициализация базы данных
+    db = ChildrenCreativeCenterDB()
+    
+    # Добавление программы
+    program_id = db.add_program(
+        program_name="Художественная студия",
+        description="Курс рисования для детей 5-10 лет",
+        age_group="5-10",
+        max_students=15,
+        cost_per_month=3000.00
+    )
+    
+    # Добавление преподавателя
+    teacher_id = db.add_teacher(
+        first_name="Анна",
+        last_name="Иванова",
+        specialization="Изобразительное искусство",
+        qualification="Высшее художественное образование"
+    )
+    
+    # Создание группы
+    group_id = db.add_group(
+        group_name="Художники-начинающие",
+        program_id=program_id,
+        teacher_id=teacher_id,
+        schedule="Пн, Ср 16:00-17:30",
+        room="Кабинет 201",
+        start_date="2024-09-01"
+    )
+    
+    # Добавление ученика
+    student_id = db.add_student(
+        first_name="Мария",
+        last_name="Петрова",
+        birth_date="2018-05-15",
+        parent_name="Елена Петрова",
+        parent_phone="+79161234567"
+    )
+    
+    # Запись ученика в группу
+    if db.enroll_student(student_id, group_id):
+        print("Ученик успешно записан в группу")
+    
+    # Отметка посещаемости
+    db.mark_attendance(
+        student_id=student_id,
+        group_id=group_id,
+        lesson_date="2024-09-02",
+        status="present"
+    )
+    
+    # Добавление платежа
+    db.add_payment(
+        student_id=student_id,
+        amount=3000.00,
+        month=9,
+        year=2024,
+        payment_method="card",
+        receipt_number="RC-001"
+    )
+    
+    # Получение статистики
+    stats = db.get_program_statistics()
+    print("Статистика по программам:")
+    for stat in stats:
+        print(stat)
+    
+    # Получение расписания ученика
+    schedule = db.get_student_schedule(student_id)
+    print(f"\nРасписание ученика:")
+    for lesson in schedule:
+        print(lesson)
+    
+    # Закрытие базы данных
+    db.close()
+
+if __name__ == "__main__":
+    main()
+```
 ## <a id="literature">Список используемой литературы</a>
 https://online.visual-paradigm.com/ru/diagrams/features/erd-tool/
 
