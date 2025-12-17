@@ -1266,6 +1266,7 @@ if __name__ == "__main__":
 ```
 ## <a id="literature">Список используемой литературы</a>
 https://online.visual-paradigm.com/ru/diagrams/features/erd-tool/
+https://github.com
 
 ## <a id="photos">Приложение</a>
 <img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/84aa9f8f-31fa-4b7c-aca0-3bb3f7c0b13e" />
